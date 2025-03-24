@@ -56,7 +56,7 @@ We truly stand on the shoulders of giants and this project would not have been e
 
 # 💰 Funding
 
-This project is currently funded through [NGI0 Entrust](https://nlnet.nl/entrust), a fund established by [NLnet](https://nlnet.nl) with financial support from the European Commission's [Next Generation Internet](https://ngi.eu) program. Learn more at the [NLnet project page](https://nlnet.nl/project/Stract).
+This project was previously funded through [NGI0 Entrust](https://nlnet.nl/entrust), a fund established by [NLnet](https://nlnet.nl) with financial support from the European Commission's [Next Generation Internet](https://ngi.eu) program. Learn more at the [NLnet project page](https://nlnet.nl/project/Stract).
 
 <div>
   <a href="https://nlnet.nl"><img align=center src="assets/nlnet/banner.png" alt="NLnet foundation logo" width="20%" /></a>
