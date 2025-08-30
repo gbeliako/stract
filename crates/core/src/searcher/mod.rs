@@ -23,6 +23,7 @@
 pub mod api;
 pub mod distributed;
 pub mod local;
+pub mod publicsearch;
 
 pub use distributed::*;
 pub use local::*;
