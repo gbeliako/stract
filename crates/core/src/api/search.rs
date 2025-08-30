@@ -33,7 +33,15 @@ use crate::{
     bangs::BangHit,
     searcher::{self, SearchQuery, SearchResult, WebsitesResult},
     webpage::region::Region,
+    //nuevo
+    searcher::publicsearch::MullvadLetaClient,
 };
+
+//nuevo 3 option
+use url::Url;
+use crate::webpage::url_ext::UrlExt;
+//use crate::schema::text_field::Url;
+//use reqwest::Url;
 
 use super::State;
 
@@ -202,12 +210,95 @@ pub async fn search(
 
     query.num_results = query.num_results.min(100);
 
-    match state.searcher.search(&query).await {
+    // Create Mullvad client
+    let mullvad_client = MullvadLetaClient::new();
+    
+    // Search both local and Mullvad in parallel
+    let local_search = state.searcher.search(&query);
+    let mullvad_search = mullvad_client.search(&query.query);
+
+    let (local_result, mullvad_result) = tokio::join!(local_search, mullvad_search);
+
+    match local_result {
         Ok(result) => {
+            // Convert to ApiSearchResult first
+            let mut api_result = ApiSearchResult::from(result);
+            
+            // If we have Mullvad results, merge them
+            if let Ok(mullvad_webpages) = mullvad_result {
+                if let ApiSearchResult::Websites(ref mut websites_result) = api_result {
+                    // Convert Mullvad results to DisplayedWebpage format
+                    let mullvad_displayed: Vec<_> = mullvad_webpages.into_iter()
+                        .filter_map(|wp| {
+                            match Url::parse(&wp.url) {
+                                Ok(url) => {
+                                    let domain = url.root_domain().unwrap_or_default().to_string();
+                                    let pretty_url = crate::search_prettifier::prettify_url(&url);
+                                    
+                                    Some(crate::search_prettifier::DisplayedWebpage {
+                                        title: wp.title,
+                                        url: wp.url,
+                                        site: url.normalized_host().unwrap_or_default().to_string(),
+                                        domain,
+                                        pretty_url,
+                                        snippet: crate::search_prettifier::Snippet {
+                                            date: wp.updated_time.map(|dt| crate::search_prettifier::prettify_date(dt)),
+                                            text: wp.snippet,
+                                        },
+                                        #[cfg(feature = "return_body")]
+                                        body: if query.return_body.is_some() { Some(wp.body) } else { None },
+                                        rich_snippet: None,
+                                        ranking_signals: None,
+                                        structured_data: if query.return_structured_data {
+                                            Some(wp.schema_org.into_iter().map(crate::search_prettifier::StructuredData::from).collect())
+                                        } else {
+                                            None
+                                        },
+                                        likely_has_ads: wp.likely_has_ads,
+                                        likely_has_paywall: wp.likely_has_paywall,
+                                    })
+                                }
+                                Err(_) => {
+                                    tracing::warn!("Failed to parse URL from Mullvad: {}", wp.url);
+                                    None
+                                }
+                            }
+                        })
+                        .collect();
+
+                    // Store lengths before moving iterators
+                    let local_len = websites_result.webpages.len();
+                    let mullvad_len = mullvad_displayed.len();
+                    
+                    // Take ownership of the webpages
+                    let local_webpages = std::mem::take(&mut websites_result.webpages);
+                    
+                    // Create iterators
+                    let mut local_iter = local_webpages.into_iter().enumerate();
+                    let mut mullvad_iter = mullvad_displayed.into_iter().enumerate();
+                    
+                    let max_len = local_len.max(mullvad_len);
+                    
+                    // Interleave results
+                    let mut interleaved = Vec::with_capacity(local_len + mullvad_len);
+                    
+                    for _i in 0..max_len {
+                        if let Some((_, local)) = local_iter.next() {
+                            interleaved.push(local);
+                        }
+                        if let Some((_, mullvad)) = mullvad_iter.next() {
+                            interleaved.push(mullvad);
+                        }
+                    }
+                    
+                    websites_result.webpages = interleaved;
+                }
+            }
+
             if flatten_result {
-                Ok(Json(ApiSearchResult::from(result)).into_response())
+                Ok(Json(api_result).into_response())
             } else {
-                Ok(Json(result).into_response())
+                Ok(Json(api_result).into_response())
             }
         }
 
@@ -224,6 +315,28 @@ pub async fn search(
         },
     }
 }
+//    match state.searcher.search(&query).await {
+//        Ok(result) => {
+//            if flatten_result {
+//                Ok(Json(ApiSearchResult::from(result)).into_response())
+//            } else {
+//                Ok(Json(result).into_response())
+//            }
+//        }
+
+//        Err(err) => match err.downcast_ref() {
+//            Some(searcher::distributed::Error::EmptyQuery) => {
+//                Ok(searcher::distributed::Error::EmptyQuery
+//                    .to_string()
+//                    .into_response())
+//            }
+//            _ => {
+//                tracing::error!("{:?}", err);
+//                Err(StatusCode::INTERNAL_SERVER_ERROR)
+//            }
+//        },
+//    }
+//}
 
 #[derive(
     Debug, serde::Serialize, serde::Deserialize, bincode::Encode, bincode::Decode, ToSchema,

@@ -134,13 +134,15 @@ impl From<LiveCrawlerConfig> for CrawlerConfig {
             max_politeness_factor: crate::config::defaults::Crawler::max_politeness_factor(),
             max_url_slowdown_retry: crate::config::defaults::Crawler::max_url_slowdown_retry(),
             timeout_seconds: 60,
-            s3: crate::config::S3Config {
-                bucket: String::new(),
-                folder: String::new(),
-                access_key: String::new(),
-                secret_key: String::new(),
-                endpoint: String::new(),
-            },
+            warc_output_dir: config.warc_output_dir,
+ //           warc_output_dir: crate::config::defaults::Crawler::warc_output_dir(),
+//            s3: crate::config::S3Config {
+//                bucket: String::new(),
+//                folder: String::new(),
+//                access_key: String::new(),
+//                secret_key: String::new(),
+//                endpoint: String::new(),
+//            },
             router_hosts: vec![],
         }
     }

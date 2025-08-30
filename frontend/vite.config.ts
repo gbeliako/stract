@@ -35,6 +35,7 @@ export default defineConfig({
     include: ['src/**/*.{test,spec}.{js,ts}'],
   },
   server: {
+    allowedHosts: ['.stract.com'],
     fs: {
       allow: ['../crates/client-wasm/pkg/'],
     },

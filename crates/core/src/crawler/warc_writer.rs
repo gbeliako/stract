@@ -14,10 +14,14 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::time::Duration;
+//use std::time::Duration;
+
+//nuevo
+use std::path::PathBuf;
 
 use crate::{
-    config::{self, S3Config},
+//    config::{self, S3Config},
+//    config,
     warc,
 };
 
@@ -57,7 +61,8 @@ pub enum WarcWriterMessage {
     Finish,
 }
 
-async fn commit(writer: warc::DeduplicatedWarcWriter, s3: config::S3Config) {
+//async fn commit(writer: warc::DeduplicatedWarcWriter, s3: config::S3Config) {
+async fn commit(writer: warc::DeduplicatedWarcWriter, output_dir: PathBuf) {
     let filename = format!(
         "{}_{}.warc.gz",
         chrono::Utc::now().to_rfc3339(),
@@ -65,43 +70,60 @@ async fn commit(writer: warc::DeduplicatedWarcWriter, s3: config::S3Config) {
     );
     let data = writer.finish().unwrap();
 
-    match s3::Bucket::new(
-        &s3.bucket,
-        s3::Region::Custom {
-            region: "".to_string(),
-            endpoint: s3.endpoint.clone(),
-        },
-        s3::creds::Credentials {
-            access_key: Some(s3.access_key.clone()),
-            secret_key: Some(s3.secret_key.clone()),
-            security_token: None,
-            session_token: None,
-            expiration: None,
-        },
-    ) {
-        Ok(bucket) => {
-            let bucket = bucket
-                .with_path_style()
-                .with_request_timeout(Duration::from_secs(30 * 60))
-                .unwrap();
+//    match s3::Bucket::new(
+//        &s3.bucket,
+//        s3::Region::Custom {
+//            region: "".to_string(),
+//            endpoint: s3.endpoint.clone(),
+//        },
+//        s3::creds::Credentials {
+//            access_key: Some(s3.access_key.clone()),
+//            secret_key: Some(s3.secret_key.clone()),
+//            security_token: None,
+//            session_token: None,
+//            expiration: None,
+//        },
+//    ) {
+//        Ok(bucket) => {
+//            let bucket = bucket
+//                .with_path_style()
+//                .with_request_timeout(Duration::from_secs(30 * 60))
+//                .unwrap();
+//
+//            if let Err(err) = bucket
+//                .put_object_with_content_type(
+//                    &format!("{}/{}", &s3.folder, filename),
+//                    &data,
+//                    "application/warc",
+//                )
+//                .await
+//            {
+//                tracing::error!("failed to upload to bucket: {:?}", err);
+//            }
+//        }
+//        Err(err) => tracing::error!("failed to connect to bucket: {:?}", err),
 
-            if let Err(err) = bucket
-                .put_object_with_content_type(
-                    &format!("{}/{}", &s3.folder, filename),
-                    &data,
-                    "application/warc",
-                )
-                .await
-            {
-                tracing::error!("failed to upload to bucket: {:?}", err);
-            }
-        }
-        Err(err) => tracing::error!("failed to connect to bucket: {:?}", err),
+
+//Nuevo
+    // Create output directory if it doesn't exist
+    if let Err(e) = tokio::fs::create_dir_all(&output_dir).await {
+        tracing::error!("Failed to create directory {}: {:?}", output_dir.display(), e);
+        return;
+    }
+
+    let file_path = output_dir.join(filename);
+
+    match tokio::fs::write(&file_path, data).await {
+        Ok(_) => tracing::info!("WARC file written to: {}", file_path.display()),
+        Err(e) => tracing::error!("Failed to write WARC file: {:?}", e),
+
     }
 }
 
-async fn writer_task(mut rx: tokio::sync::mpsc::Receiver<WarcWriterMessage>, s3: S3Config) {
+//async fn writer_task(mut rx: tokio::sync::mpsc::Receiver<WarcWriterMessage>, s3: S3Config) {
+async fn writer_task(mut rx: tokio::sync::mpsc::Receiver<WarcWriterMessage>, output_dir: PathBuf) {
     let mut writer = warc::DeduplicatedWarcWriter::new();
+    let output_dir = output_dir.clone(); // Clone for use in the loop
 
     while let Some(message) = rx.recv().await {
         match message {
@@ -133,13 +155,15 @@ async fn writer_task(mut rx: tokio::sync::mpsc::Receiver<WarcWriterMessage>, s3:
                 recv.await.unwrap();
 
                 if writer.num_bytes() > 1_000_000_000 {
-                    commit(writer, s3.clone()).await;
+//                    commit(writer, s3.clone()).await;
+                    commit(writer, output_dir.clone()).await;
                     writer = warc::DeduplicatedWarcWriter::new();
                 }
             }
             WarcWriterMessage::Finish => {
                 if writer.num_writes() > 0 {
-                    commit(writer, s3.clone()).await;
+//                    commit(writer, s3.clone()).await;
+                    commit(writer, output_dir).await;
                 }
                 break;
             }
@@ -148,10 +172,11 @@ async fn writer_task(mut rx: tokio::sync::mpsc::Receiver<WarcWriterMessage>, s3:
 }
 
 impl WarcWriter {
-    pub fn new(s3: S3Config) -> Self {
+//    pub fn new(s3: S3Config) -> Self {
+    pub fn new(output_dir: PathBuf) -> Self {
         let (tx, rx) = tokio::sync::mpsc::channel(1);
 
-        tokio::spawn(writer_task(rx, s3));
+        tokio::spawn(writer_task(rx, output_dir));
 
         Self { tx }
     }

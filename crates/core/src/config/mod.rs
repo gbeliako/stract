@@ -134,6 +134,8 @@ impl WarcSource {
             WarcSource::Local(config) => {
                 warc_paths.clone_from(&config.names);
             }
+//nuevo
+//            warc_output_dir: PathBuf::from("data/warc"), 
             WarcSource::S3(config) => {
                 let bucket = s3::Bucket::new(
                     &config.bucket,
@@ -418,7 +420,8 @@ pub struct CrawlerConfig {
     pub max_url_slowdown_retry: u8,
 
     pub timeout_seconds: u64,
-    pub s3: S3Config,
+//    pub s3: S3Config,
+    pub warc_output_dir: PathBuf,
     pub router_hosts: Vec<String>,
 }
 
@@ -439,13 +442,15 @@ impl CrawlerConfig {
             max_politeness_factor: defaults::Crawler::max_politeness_factor(),
             max_url_slowdown_retry: defaults::Crawler::max_url_slowdown_retry(),
             timeout_seconds: defaults::Crawler::timeout_seconds(),
-            s3: S3Config {
-                bucket: "".to_string(),
-                folder: "".to_string(),
-                access_key: "".to_string(),
-                secret_key: "".to_string(),
-                endpoint: "".to_string(),
-            },
+//            s3: S3Config {
+//                bucket: "".to_string(),
+//                folder: "".to_string(),
+//                access_key: "".to_string(),
+//                secret_key: "".to_string(),
+//                endpoint: "".to_string(),
+//            },
+//nuevo
+            warc_output_dir: PathBuf::from("data/warc_output"),
             router_hosts: Vec::new(),
         }
     }
@@ -514,6 +519,7 @@ pub struct LiveCrawlerConfig {
     pub daily_budget: DailyLiveIndexCrawlerBudget,
     #[serde(default = "defaults::LiveCrawler::init_crawl_db")]
     pub init_crawl_db: bool,
+    pub warc_output_dir: PathBuf,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
