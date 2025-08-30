@@ -40,7 +40,7 @@ if they take our code without making theirs open source, which would breach the 
 
 ## Setup
 
-- Install rust by following the steps outlined [here](https://www.rust-lang.org/tools/install).
+- Install rust by following the steps outlined [here](https://www.rust-lang.org/tools/install). (or just sudo apt install cargo pkg-config wasm)
 - Install clang and npm.
 - Install liburing. If you're using a Debian based Linux, you can install it by running `sudo apt install liburing-dev`.
 - Install [just](https://github.com/casey/just) by running `cargo install just`. This allows you to run the scripts in the `justfile` file. A justfile is basically a simple Makefile.
@@ -50,3 +50,6 @@ if they take our code without making theirs open source, which would breach the 
 - (Optional) Install [abeye](https://github.com/oeb25/abeye) by running `cargo install --git https://github.com/oeb25/abeye --locked`. This is used for generating the API client used by the frontend by running `just openapi`.
 
 After the non optional steps you can now run `cargo test` and should see all tests passing. If you have installed `cargo-watch`, you should be able to run `just dev` to start the search server and launch the frontend at `0.0.0.0:8000`.
+
+in case of an error about optics, need to make sure that crates/optics/testcases/samples/ contains the necessary ones. might have to download manually.
+need to modify frontend/.env to point at the correct server ip
