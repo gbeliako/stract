@@ -110,7 +110,7 @@ impl From<web_spell::Correction> for HighlightedSpellCorrection {
     }
 }
 
-fn prettify_url(url: &Url) -> String {
+pub fn prettify_url(url: &Url) -> String {
     let mut pretty_url = url.clone();
     pretty_url.set_query(None);
 
@@ -130,7 +130,7 @@ fn prettify_url(url: &Url) -> String {
     pretty_url
 }
 
-fn prettify_date(date: NaiveDateTime) -> String {
+pub fn prettify_date(date: NaiveDateTime) -> String {
     let current_time = Utc::now().naive_utc();
     let diff = current_time.signed_duration_since(date);
 
