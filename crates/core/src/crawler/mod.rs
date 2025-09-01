@@ -277,7 +277,8 @@ pub struct Crawler {
 
 impl Crawler {
     pub async fn new(config: CrawlerConfig) -> Result<Self> {
-        let writer = Arc::new(WarcWriter::new(config.s3.clone()));
+//        let writer = Arc::new(WarcWriter::new(config.s3.clone()));
+        let writer = Arc::new(WarcWriter::new(config.warc_output_dir.clone()));
         let mut handles = Vec::new();
         let mut router_hosts = Vec::new();
         let client = RobotClient::new(&config)?;
