@@ -25,6 +25,9 @@ use crate::config;
 use crate::entrypoint::download_all_warc_files;
 use crate::index::Index;
 use crate::warc::PayloadType;
+//nuevo
+use crate::wet::WetFile;
+use crate::entrypoint::download_all_wet_files;
 
 use super::{IndexableWebpage, IndexingWorker};
 
@@ -34,6 +37,7 @@ pub struct Job {
     pub warc_path: String,
     pub base_path: String,
     pub settings: JobSettings,
+    pub use_wet_files: bool, // Add this flag
 }
 
 #[derive(
@@ -59,64 +63,140 @@ impl Job {
         let mut index = Index::open(Path::new(&self.base_path).join(name)).unwrap();
         index.prepare_writer().unwrap();
 
-        let paths = vec![self.warc_path.clone()];
-        let warc_files = download_all_warc_files(&paths, &self.source_config);
-        pin!(warc_files);
+        //nuevo
+        if self.use_wet_files {
+            // Process WET files
+            let paths = vec![self.warc_path.clone()];
+            let wet_files = download_all_wet_files(&paths, &self.source_config);
+            pin!(wet_files);
 
-        let mut num_inserts_since_commit = 0;
+            let mut num_inserts_since_commit = 0;
 
-        for file in warc_files.by_ref() {
-            let mut batch = Vec::with_capacity(self.settings.batch_size);
+            for file in wet_files.by_ref() {
+                let mut batch = Vec::with_capacity(self.settings.batch_size);
 
-            for chunk in file
-                .records()
-                .flatten()
-                .filter(|record| match &record.response.payload_type {
-                    Some(payload_type) => matches!(payload_type, PayloadType::Html),
-                    None => true,
-                })
-                .filter(|record| !worker.see(&record.request.url))
-                .chunks(self.settings.batch_size)
-                .into_iter()
-            {
-                batch.clear();
-
-                for record in chunk {
+                for record in file.records().flatten() {
                     batch.push(IndexableWebpage::from(record));
+
+                    if batch.len() >= self.settings.batch_size {
+                        let prepared = crate::block_on(worker.prepare_webpages(&batch));
+
+                        for webpage in &prepared {
+                            if webpage.host_centrality > 0.0 {
+                                has_host_centrality = true;
+                            }
+
+                            trace!("inserting webpage: {:?}", webpage.html.url());
+                            trace!("title = {:?}", webpage.html.title());
+                            trace!("text = {:?}", webpage.html.clean_text());
+
+                            if let Err(err) = index.insert(webpage) {
+                                warn!("{:?}", err);
+                                panic!();
+                            }
+
+                            num_inserts_since_commit += 1;
+                        }
+
+                        batch.clear();
+
+                        if num_inserts_since_commit >= self.settings.autocommit_after_num_inserts {
+                            index.commit().unwrap();
+                            num_inserts_since_commit = 0;
+                        }
+                    }
                 }
 
-                let prepared = crate::block_on(worker.prepare_webpages(&batch));
+                // Process any remaining items in the batch
+                if !batch.is_empty() {
+                    let prepared = crate::block_on(worker.prepare_webpages(&batch));
 
-                for webpage in &prepared {
-                    if webpage.host_centrality > 0.0 {
-                        has_host_centrality = true;
+                    for webpage in &prepared {
+                        if webpage.host_centrality > 0.0 {
+                            has_host_centrality = true;
+                        }
+
+                        trace!("inserting webpage: {:?}", webpage.html.url());
+                        trace!("title = {:?}", webpage.html.title());
+                        trace!("text = {:?}", webpage.html.clean_text());
+
+                        if let Err(err) = index.insert(webpage) {
+                            warn!("{:?}", err);
+                            panic!();
+                        }
+
+                        num_inserts_since_commit += 1;
                     }
 
-                    if webpage.page_centrality > 0.0 {
-                        has_page_centrality = true;
+                    if num_inserts_since_commit >= self.settings.autocommit_after_num_inserts {
+                        index.commit().unwrap();
+                        num_inserts_since_commit = 0;
                     }
-
-                    if !webpage.backlinks().is_empty() {
-                        has_backlinks = true;
-                    }
-                    trace!("inserting webpage: {:?}", webpage.html.url());
-                    trace!("title = {:?}", webpage.html.title());
-                    trace!("text = {:?}", webpage.html.clean_text());
-
-                    if let Err(err) = index.insert(webpage) {
-                        warn!("{:?}", err);
-                        panic!();
-                    }
-
-                    num_inserts_since_commit += 1;
                 }
+            }
+        } else {
+            // Original WARC processing
 
-                if num_inserts_since_commit >= self.settings.autocommit_after_num_inserts {
-                    index.commit().unwrap();
-                    num_inserts_since_commit = 0;
+            let paths = vec![self.warc_path.clone()];
+            let warc_files = download_all_warc_files(&paths, &self.source_config);
+            pin!(warc_files);
+
+            let mut num_inserts_since_commit = 0;
+
+            for file in warc_files.by_ref() {
+                let mut batch = Vec::with_capacity(self.settings.batch_size);
+
+                for chunk in file
+                    .records()
+                    .flatten()
+                    .filter(|record| match &record.response.payload_type {
+                        Some(payload_type) => matches!(payload_type, PayloadType::Html),
+                        None => true,
+                    })
+                    .filter(|record| !worker.see(&record.request.url))
+                    .chunks(self.settings.batch_size)
+                    .into_iter()
+                {
+                    batch.clear();
+
+                    for record in chunk {
+                        batch.push(IndexableWebpage::from(record));
+                    }
+
+                    let prepared = crate::block_on(worker.prepare_webpages(&batch));
+
+                    for webpage in &prepared {
+                        if webpage.host_centrality > 0.0 {
+                            has_host_centrality = true;
+                        }
+
+                        if webpage.page_centrality > 0.0 {
+                            has_page_centrality = true;
+                        }
+
+                        if !webpage.backlinks().is_empty() {
+                            has_backlinks = true;
+                        }
+                        trace!("inserting webpage: {:?}", webpage.html.url());
+                        trace!("title = {:?}", webpage.html.title());
+                        trace!("text = {:?}", webpage.html.clean_text());
+
+                        if let Err(err) = index.insert(webpage) {
+                            warn!("{:?}", err);
+                            panic!();
+                        }
+
+                        num_inserts_since_commit += 1;
+                    }
+
+                    if num_inserts_since_commit >= self.settings.autocommit_after_num_inserts {
+                        index.commit().unwrap();
+                        num_inserts_since_commit = 0;
+                    }
                 }
             }
         }
+
         index.commit().unwrap();
 
         if !has_host_centrality {

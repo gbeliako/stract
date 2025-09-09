@@ -79,6 +79,9 @@ pub struct IndexerConfig {
     pub autocommit_after_num_inserts: usize,
 
     pub dual_encoder: Option<IndexerDualEncoderConfig>,
+    //nuevo
+    pub wet_harmonic_centrality_path: Option<String>,
+    pub use_wet_files: bool,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -620,6 +623,8 @@ pub struct CrawlPlannerConfig {
     pub domain_boosts: Option<Vec<CrawlPlannerDomainBoost>>,
 
     pub top_hosts_budget_boost: Option<TopHostsBudgetBoostConfig>,
+    //nuevo
+    pub urls_to_crawl: Option<String>,
 
     pub gossip: GossipConfig,
 }

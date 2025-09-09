@@ -166,6 +166,7 @@ fn create_inverted_index() -> Result<()> {
             batch_size: defaults::Indexing::batch_size(),
             autocommit_after_num_inserts: defaults::Indexing::autocommit_after_num_inserts(),
         },
+        use_wet_files: false, // nuevo
     };
 
     let webgraph_path = Path::new(DATA_PATH).join("webgraph");
@@ -198,6 +199,9 @@ fn create_inverted_index() -> Result<()> {
                 model_path: p.to_str().unwrap().to_string(),
                 page_centrality_rank_threshold: Some(100_000),
             }),
+            use_wet_files: false, // Add this line
+            wet_harmonic_centrality_path: None, // Add this line
+
         }
         .into(),
     ));

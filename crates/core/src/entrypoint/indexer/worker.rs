@@ -19,6 +19,14 @@ use itertools::Itertools;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+//nuevo
+// Add these imports at the top
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use flate2::read::GzDecoder;
+use crate::backlink_grouper::GroupedBacklinks;
+
 use tracing::debug;
 
 pub use super::indexable_webpage::IndexableWebpage;
@@ -37,6 +45,33 @@ use crate::webgraph::{self, EdgeLimit, Node, NodeID, SmallEdgeWithLabel};
 use crate::webpage::{safety_classifier, Html, Webpage};
 
 const MAX_BACKLINKS: EdgeLimit = EdgeLimit::Limit(1024);
+
+
+// Add this function to load harmonic centrality from CC's format
+fn load_harmonic_centrality(path: &str) -> HashMap<String, (f64, u64)> {
+    let mut centrality_map = HashMap::new();
+    
+    if let Ok(file) = File::open(path) {
+        let decoder = GzDecoder::new(file);
+        let reader = BufReader::new(decoder);
+        
+        for line in reader.lines().filter_map(Result::ok) {
+            if line.starts_with('#') {
+                continue; // Skip header lines
+            }
+            
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 5 {
+                if let (Ok(rank), Ok(centrality)) = (parts[0].parse::<u64>(), parts[1].parse::<f64>()) {
+                    let host = parts[4].to_string();
+                    centrality_map.insert(host, (centrality, rank));
+                }
+            }
+        }
+    }
+    
+    centrality_map
+}
 
 #[derive(Clone)]
 pub enum IndexerGraphConfig {
@@ -63,6 +98,8 @@ pub struct Config {
     pub page_webgraph: Option<IndexerGraphConfig>,
     pub safety_classifier_path: Option<String>,
     pub dual_encoder: Option<IndexerDualEncoderConfig>,
+    pub wet_harmonic_centrality_path: Option<String>, // Add this
+    pub use_wet_files: bool, // Add this flag
 }
 
 impl From<IndexerConfig> for Config {
@@ -73,6 +110,8 @@ impl From<IndexerConfig> for Config {
             page_webgraph: config.page_webgraph.map(IndexerGraphConfig::from),
             safety_classifier_path: config.safety_classifier_path,
             dual_encoder: config.dual_encoder,
+            use_wet_files: config.use_wet_files, // Add this
+            wet_harmonic_centrality_path: config.wet_harmonic_centrality_path, // Add this
         }
     }
 }
@@ -197,10 +236,19 @@ pub struct IndexingWorker {
     rake: RakeModel,
     dual_encoder: Option<DualEncoder>,
     seen_urls: Mutex<bloom::BytesBloomFilter<String>>,
+    wet_harmonic_centrality: HashMap<String, (f64, u64)>, // Add this
+    use_wet_files: bool, // Add this flag
 }
 
 impl IndexingWorker {
     pub async fn new(config: Config) -> Self {
+        let wet_harmonic_centrality = if let Some(path) = &config.wet_harmonic_centrality_path {
+            load_harmonic_centrality(path)
+        } else {
+            HashMap::new()
+        };
+        debug!("fn new index. wet_harmonic_centrality:");
+
         let host_centrality_rank_store = speedy_kv::Db::open_or_create(
             Path::new(&config.host_centrality_store_path).join("harmonic_rank"),
         )
@@ -241,6 +289,8 @@ impl IndexingWorker {
                 }
             }),
             seen_urls: Mutex::new(bloom::BytesBloomFilter::new(10_000_000_000, 0.05)),
+            wet_harmonic_centrality,
+            use_wet_files: config.use_wet_files,
         }
     }
 
@@ -274,56 +324,124 @@ impl IndexingWorker {
     }
 
     fn prepare(&self, page: &IndexableWebpage) -> Result<Webpage> {
-        let html = match Html::parse_without_text(&page.body, &page.url) {
-            Ok(html) => html,
-            Err(err) => {
-                return Err(anyhow::anyhow!("error parsing html: {:?}", err));
+        if self.use_wet_files {
+        // try to extract title from the first line or content
+        let title = Self::extract_title_from_text(&page.body).unwrap_or_else(|| page.url.clone());
+        // Create HTML content with the title included
+        let html_content = format!("<html><head><title>{}</title></head><body>{}</body></html>", 
+                                  title, page.body);
+
+
+        // For WET files, we need to extract title from the text content
+            let html = match Html::parse(&html_content, &page.url) {
+                Ok(html) => html,
+                Err(err) => {
+                    return Err(anyhow::anyhow!("error parsing html: {:?}", err));
+                }
+            };
+
+            // try to extract title from the first line or content
+//            let title = self::extract_title_from_text(&page.body).unwrap_or_else(|| page.url.clone());
+            // Create a modified HTML with the extracted title
+//            let mut html_with_title = html;
+//            html_with_title.title = Some(title);
+            // Create a new Html with the extracted title
+//            let html_with_title = Html {
+//                title: Some(title),
+//                ..html
+//            };
+        
+            Ok(Webpage::from(html))
+        } else {
+            // Original WARC processing
+            let html = match Html::parse_without_text(&page.body, &page.url) {
+                Ok(html) => html,
+                Err(err) => {
+                    return Err(anyhow::anyhow!("error parsing html: {:?}", err));
+                }
+            };
+
+            if html.is_no_index() {
+                return Err(anyhow::anyhow!("noindex"));
             }
-        };
 
-        if html.is_no_index() {
-            return Err(anyhow::anyhow!("noindex"));
+            let title = html.title().unwrap_or_default();
+            debug!("fn prepare, title: {}", title); 
+            if title.is_empty() || title.chars().all(|c| c.is_whitespace()) {
+                return Err(anyhow::anyhow!("empty title"));
+            }
+
+            Ok(Webpage::from(html))
+        }
+    }
+    // Add this helper function to extract title from text
+    fn extract_title_from_text(text: &str) -> Option<String> {
+        // Try to find the first line that looks like a title
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && trimmed.len() < 100 && !trimmed.starts_with("http") {
+                return Some(trimmed.to_string());
+            }
         }
 
-        let title = html.title().unwrap_or_default();
-        if title.is_empty() || title.chars().all(|c| c.is_whitespace()) {
-            return Err(anyhow::anyhow!("empty title"));
-        }
-
-        Ok(Webpage::from(html))
+        // If no good title found, use the first non-empty line
+        text.lines()
+            .find(|line| !line.trim().is_empty())
+            .map(|line| line.trim().to_string())
     }
 
     fn set_host_centrality(&self, page: &mut Webpage) -> Result<()> {
-        let node = Node::from(page.html.url());
-        let host_node_id = node.clone().into_host().id();
+        if self.use_wet_files {
+            debug!("fn set host centrality, use_wet_files");
+            // Use precomputed harmonic centrality for WET files
+            let host = page.html.url().host_str().unwrap_or_default().to_string();
+            let reversed_domain = host.split('.').rev().collect::<Vec<&str>>().join(".");
+            debug!("Processing URL: {}, Extracted host: {}", page.html.url(), host);
 
-        let host_centrality = self
-            .host_centrality_store
-            .get(&host_node_id)
-            .unwrap()
-            .unwrap_or_default();
+            if let Some((centrality, rank)) = self.wet_harmonic_centrality.get(&reversed_domain) {
+                page.host_centrality = *centrality;
+                page.host_centrality_rank = *rank;
+                debug!("Reversed domain: {}, Found centrality: {}", reversed_domain,
+                   self.wet_harmonic_centrality.get(&reversed_domain).is_some());
 
-        let host_centrality_rank = self
-            .host_centrality_rank_store
-            .get(&host_node_id)
-            .unwrap()
-            .unwrap_or(u64::MAX);
-
-        if let Some(host_centrality_threshold) =
-            self.job_settings.and_then(|s| s.host_centrality_threshold)
-        {
-            if host_centrality < host_centrality_threshold {
-                return Err(anyhow::anyhow!("low host_centrality value"));
+            } else {
+                debug!("not found wet host centrality, setting to 0, max");
+                page.host_centrality = 0.0;
+                page.host_centrality_rank = u64::MAX;
             }
-        }
+        } else {
+            debug!("normal warc else");
+            let node = Node::from(page.html.url());
+            let host_node_id = node.clone().into_host().id();
 
-        page.node_id = Some(host_node_id);
+            let host_centrality = self
+                .host_centrality_store
+                .get(&host_node_id)
+                .unwrap()
+                .unwrap_or_default();
 
-        page.host_centrality = host_centrality;
-        page.host_centrality_rank = host_centrality_rank;
+            let host_centrality_rank = self
+                .host_centrality_rank_store
+                .get(&host_node_id)
+                .unwrap()
+                .unwrap_or(u64::MAX);
 
-        if !page.host_centrality.is_finite() {
-            page.host_centrality = 0.0;
+            if let Some(host_centrality_threshold) =
+                self.job_settings.and_then(|s| s.host_centrality_threshold)
+            {
+                if host_centrality < host_centrality_threshold {
+                    return Err(anyhow::anyhow!("low host_centrality value"));
+                }
+            }
+
+            page.node_id = Some(host_node_id);
+
+            page.host_centrality = host_centrality;
+            page.host_centrality_rank = host_centrality_rank;
+
+            if !page.host_centrality.is_finite() {
+                page.host_centrality = 0.0;
+            }
         }
 
         self.parse_text(page)?;
@@ -417,33 +535,39 @@ impl IndexingWorker {
     }
 
     pub async fn set_backlinks(&self, pages: &mut [Webpage]) {
-        if let Some(graph) = self.page_webgraph() {
-            let ids = pages
-                .iter()
-                .map(|w| Node::from(w.html.url()).id())
-                .collect::<Vec<_>>();
+        if self.use_wet_files {
+            // WET files don't have backlinks, so skip this step
+            for page in pages.iter_mut() {
+                page.set_backlinks(Vec::new());
+                page.set_grouped_backlinks(GroupedBacklinks::empty());
+            }
+        } else if let Some(graph) = self.page_webgraph() {
+                let ids = pages
+                    .iter()
+                    .map(|w| Node::from(w.html.url()).id())
+                    .collect::<Vec<_>>();
 
-            let backlinks = graph
-                .batch_raw_ingoing_edges_with_labels(ids, MAX_BACKLINKS)
-                .await;
+                let backlinks = graph
+                    .batch_raw_ingoing_edges_with_labels(ids, MAX_BACKLINKS)
+                    .await;
 
-            for (page, backlinks) in pages.iter_mut().zip_eq(backlinks) {
-                page.set_backlinks(backlinks.clone());
+                for (page, backlinks) in pages.iter_mut().zip_eq(backlinks) {
+                    page.set_backlinks(backlinks.clone());
 
-                let mut grouper =
-                    BacklinkGrouper::new(self.host_centrality_rank_store.len() as u64);
+                    let mut grouper =
+                        BacklinkGrouper::new(self.host_centrality_rank_store.len() as u64);
 
-                for backlink in backlinks {
-                    let from = self
-                        .host_centrality_rank_store
-                        .get(&backlink.from)
-                        .unwrap()
-                        .unwrap_or(u64::MAX);
+                    for backlink in backlinks {
+                        let from = self
+                            .host_centrality_rank_store
+                            .get(&backlink.from)
+                            .unwrap()
+                            .unwrap_or(u64::MAX);
 
-                    grouper.add(backlink, from);
-                }
+                        grouper.add(backlink, from);
+                    }
 
-                page.set_grouped_backlinks(grouper.groups())
+                    page.set_grouped_backlinks(grouper.groups())
             }
         }
     }

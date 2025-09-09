@@ -205,6 +205,9 @@ impl LiveIndexService {
                     }),
                     safety_classifier_path: config.safety_classifier_path.clone(),
                     dual_encoder: None,
+                    //nuevo
+                    use_wet_files: false,
+                    wet_harmonic_centrality_path: None,
                 },
             )
             .await?,

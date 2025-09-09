@@ -92,6 +92,8 @@ pub mod tokenizer;
 #[allow(unused)]
 mod ttl_cache;
 pub mod warc;
+//nuevo
+pub mod wet;
 pub mod webgraph;
 pub mod webpage;
 mod widgets;
@@ -104,6 +106,10 @@ pub use block_on::block_on;
 pub enum Error {
     #[error("Failed to parse WARC file: {0}")]
     WarcParse(String),
+
+    //nuevo
+    #[error("WET parse error: {0}")]
+    WetParse(String),
 
     #[error("Encountered an empty required field ({0}) when converting to tantivy")]
     EmptyField(&'static str),

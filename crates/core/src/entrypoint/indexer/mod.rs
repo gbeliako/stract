@@ -68,6 +68,8 @@ pub fn run(config: &config::IndexerConfig) -> Result<()> {
                     batch_size: config.batch_size,
                     autocommit_after_num_inserts: config.autocommit_after_num_inserts,
                 },
+                //nuevo
+                use_wet_files: config.use_wet_files, // Add this line
             })
             .map(|job| {
                 IndexPointer(

@@ -16,6 +16,9 @@
 
 use crate::crawler::CrawlDatum;
 use crate::warc::WarcRecord;
+//nuevo
+use crate::wet::WetRecord;
+
 
 #[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
 pub struct IndexableWebpage {
@@ -40,6 +43,16 @@ impl From<WarcRecord> for IndexableWebpage {
             url: record.request.url,
             body: record.response.body,
             fetch_time_ms: record.metadata.fetch_time_ms,
+        }
+    }
+}
+//nuevo
+impl From<WetRecord> for IndexableWebpage {
+    fn from(record: WetRecord) -> Self {
+        Self {
+            url: record.url,
+            body: record.body,
+            fetch_time_ms: record.fetch_time_ms,
         }
     }
 }
